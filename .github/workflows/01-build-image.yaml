@@ -1,4 +1,4 @@
-name: build-image
+name: Build and Push Docker Image
 
 on:
   push:
@@ -12,39 +12,42 @@ jobs:
     defaults:
       run:
         working-directory: app
+
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Login to Docker Hub
+      - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Calculate version
+      - name: Calculate semantic version
         id: calculate-version
         uses: bitshifted/git-auto-semver@v1
 
-        # https://github.com/marketplace/actions/git-automatic-semantic-versioning
-      - name: Use version
-        run: echo "Calculated version:v${{ steps.calculate-version.outputs.version-string }}"
+      - name: Display calculated version
+        run: echo "Version: v${{ steps.calculate-version.outputs.version-string }}"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: List files
+      - name: List Docker context files
         run: ls -lha
 
-      - name: Build an image from Dockerfile
+      - name: Build Docker image
         env:
           DOCKER_BUILDKIT: 1
         run: |
-          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/container-technologies:v${{ steps.calculate-version.outputs.version-string }} .
+          docker build \
+            --label "org.opencontainers.image.source=${{ github.repositoryUrl }}" \
+            --tag ${{ secrets.DOCKERHUB_USERNAME }}/container-technologies:v${{ steps.calculate-version.outputs.version-string }} \
+            --tag ${{ secrets.DOCKERHUB_USERNAME }}/container-technologies:latest \
+            .
 
-      - name: Run Trivy vulnerability scanner (non-blocking)
+      - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@master
-        continue-on-error: true
         with:
           image-ref: '${{ secrets.DOCKERHUB_USERNAME }}/container-technologies:v${{ steps.calculate-version.outputs.version-string }}'
           format: 'table'
@@ -53,18 +56,20 @@ jobs:
           vuln-type: 'os,library'
           severity: 'CRITICAL,HIGH'
 
-      - name: Push image
+      - name: Push Docker image
         run: |
-          docker image push ${{ secrets.DOCKERHUB_USERNAME }}/container-technologies:v${{ steps.calculate-version.outputs.version-string }}
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/container-technologies:v${{ steps.calculate-version.outputs.version-string }}
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/container-technologies:latest
 
-      - name: Open Pull Request
+      - name: Create Pull Request from develop to main
+        if: github.ref == 'refs/heads/develop'
         uses: devops-infra/action-pull-request@v0.5.5
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           source_branch: develop
           target_branch: main
           title: Automatic Pull Request
-          body: "This is an automatic pull request from the develop branch."
+          body: "Automatic PR from develop to main."
           labels: |
             - enhancement
             - auto-pr
